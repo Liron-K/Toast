@@ -105,7 +105,8 @@ static const NSString * CSToastPropertiesKey   = @"CSToastPropertiesKey";
     }
     
     [self addSubview:toast];
-    
+  
+    __block UIView* weakSelf = self;
     [UIView animateWithDuration:properties.fadeDuration
                           delay:0.0
                         options:(UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction)
@@ -113,10 +114,12 @@ static const NSString * CSToastPropertiesKey   = @"CSToastPropertiesKey";
                          toast.alpha = 1.0;
                      } completion:^(BOOL finished) {
                          NSDictionary* info = @{CSToastViewKey: toast, CSToastPropertiesKey:properties};
-                         NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:properties.duration target:self selector:@selector(toastTimerDidFinish:) userInfo:info repeats:NO];
+                         NSTimer *timer = [NSTimer timerWithTimeInterval:properties.duration target:weakSelf selector:@selector(toastTimerDidFinish:) userInfo:info repeats:NO];
                          // associate the timer with the toast view
-                         objc_setAssociatedObject (toast, &CSToastTimerKey, timer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                         objc_setAssociatedObject (toast, &CSToastTapCallbackKey, tapCallback, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                         objc_setAssociatedObject (weakSelf, &CSToastTimerKey, timer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                       
+                         objc_setAssociatedObject (weakSelf, &CSToastTapCallbackKey, tapCallback, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                       [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];
                      }];
 }
 
@@ -138,32 +141,55 @@ properties:(ToastProperties*)properties
 
 #pragma mark - Events
 
+-(void)invalidateTimer
+{
+  NSTimer *t = (NSTimer *)objc_getAssociatedObject(self, &CSToastTimerKey);
+  
+  objc_setAssociatedObject(self, &CSToastTimerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if(t)
+  {
+    [t invalidate];
+  }
+}
+
 - (void)toastTimerDidFinish:(NSTimer *)timer {
+  
     NSDictionary* info = timer.userInfo;
+    [self invalidateTimer];
+  
     UIView* toastView = info[CSToastViewKey];
     ToastProperties* properties = info[CSToastPropertiesKey];
     [self hideToast:toastView properties:properties];
 }
 
-- (void)handleToastTapped:(UITapGestureRecognizer *)recognizer {
-    NSTimer *timer = (NSTimer *)objc_getAssociatedObject(self, &CSToastTimerKey);
+- (void)handleToastTapped:(UITapGestureRecognizer *)recognizer
+{
   
+  @try {
+    NSTimer *timer = (NSTimer *)objc_getAssociatedObject(self, &CSToastTimerKey);
+    
     ToastProperties* properties = nil;
     if(timer)
     {
-        NSDictionary* info = timer.userInfo;
-        if(info)
-        {
-            properties = info[CSToastPropertiesKey];
-        }
-        [timer invalidate];
+      NSDictionary* info = timer.userInfo;
+      if(info)
+      {
+        properties = info[CSToastPropertiesKey];
+      }
+      
+      [self invalidateTimer];
     }
-  
+    
     void (^callback)(void) = objc_getAssociatedObject(self, &CSToastTapCallbackKey);
     if (callback) {
-        callback();
+      callback();
+      objc_setAssociatedObject(self, &CSToastTapCallbackKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    
     [self hideToast:recognizer.view properties:properties];
+  } @catch (NSException *exception) {
+    
+  }
 }
 
 #pragma mark - Toast Activity Methods
